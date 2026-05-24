@@ -1,0 +1,24 @@
+{
+  "name": "realtime-server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^4.0.1",
+    "socket.io": "^4.8.1",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.22"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^20.17.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
