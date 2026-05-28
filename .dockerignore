@@ -6,3 +6,4 @@ docker-compose.yml
 npm-debug.log
 README.md
 .agents
+dist
