@@ -12,18 +12,35 @@ export function setupYjsSync(io: Server): void {
     const userId = socket.data.userId as string;
     console.log(`[YjsSync] User ${userId} connected (socket ${socket.id})`);
 
-    // Track which boards this socket has joined, and the clientID used per board
-    const joinedBoards = new Map<string, number>();
+    // Track clientIDs used by this socket across different boards
+    // Map<boardId, Set<clientID>>
+    const socketClientIds = new Map<string, Set<number>>();
 
     socket.on('join-board', (boardId: string) => {
       const { doc, awareness } = getRoom(boardId);
 
       socket.join(boardId);
 
-      // Assign a unique clientID per socket-board combo
-      // We use a deterministic but unique value based on socket id hash
-      const clientID = awareness.doc.clientID + hashCode(socket.id);
-      joinedBoards.set(boardId, clientID);
+      // Initialize tracking for this board
+      if (!socketClientIds.has(boardId)) {
+        socketClientIds.set(boardId, new Set());
+      }
+
+      // Listen for awareness updates to capture the clientID(s) used by this socket
+      const awarenessUpdateHandler = (
+        { added, updated }: { added: number[]; updated: number[] },
+        origin: any
+      ) => {
+        if (origin === socket) {
+          const ids = socketClientIds.get(boardId);
+          if (ids) {
+            added.forEach(id => ids.add(id));
+            updated.forEach(id => ids.add(id));
+          }
+        }
+      };
+
+      awareness.on('update', awarenessUpdateHandler);
 
       // Send full doc state to the new client
       const docState = Y.encodeStateAsUpdate(doc);
@@ -37,62 +54,55 @@ export function setupYjsSync(io: Server): void {
       }
 
       console.log(`[YjsSync] User ${userId} joined board ${boardId}`);
+
+      // Store handler for cleanup when leaving board or disconnecting
+      socket.data[`awarenessHandler_${boardId}`] = awarenessUpdateHandler;
     });
 
     socket.on('yjs:update', (boardId: string, update: ArrayBuffer) => {
       const { doc } = getRoom(boardId);
       const uint8Update = new Uint8Array(update);
-
-      // Apply to server's doc to keep it current
       Y.applyUpdate(doc, uint8Update);
-
-      // Broadcast to all other clients in the room
       socket.to(boardId).emit('yjs:update', Buffer.from(uint8Update));
     });
 
     socket.on('awareness:update', (boardId: string, update: ArrayBuffer) => {
       const { awareness } = getRoom(boardId);
       const uint8Update = new Uint8Array(update);
-
-      // Apply awareness update on the server
+      // Pass socket as origin to track which IDs it's updating
       applyAwarenessUpdate(awareness, uint8Update, socket);
-
-      // Broadcast to all other clients in the room
       socket.to(boardId).emit('awareness:update', Buffer.from(uint8Update));
     });
 
     socket.on('leave-board', (boardId: string) => {
       socket.leave(boardId);
       cleanupAwareness(boardId);
-      joinedBoards.delete(boardId);
       console.log(`[YjsSync] User ${userId} left board ${boardId}`);
     });
 
     socket.on('disconnect', () => {
-      // Clean up awareness for all boards this socket was in
-      for (const [boardId] of joinedBoards) {
+      for (const boardId of socketClientIds.keys()) {
         cleanupAwareness(boardId);
       }
-      joinedBoards.clear();
       console.log(`[YjsSync] User ${userId} disconnected (socket ${socket.id})`);
     });
 
     function cleanupAwareness(boardId: string): void {
-      const clientID = joinedBoards.get(boardId);
-      if (clientID !== undefined) {
-        const { awareness } = getRoom(boardId);
-        removeAwarenessStates(awareness, [clientID], socket);
+      const ids = socketClientIds.get(boardId);
+      const { awareness } = getRoom(boardId);
+      
+      // Stop listening to updates for this board
+      const handler = socket.data[`awarenessHandler_${boardId}`];
+      if (handler) {
+        awareness.off('update', handler);
+        delete socket.data[`awarenessHandler_${boardId}`];
       }
+
+      if (ids && ids.size > 0) {
+        removeAwarenessStates(awareness, Array.from(ids), socket);
+        ids.clear();
+      }
+      socketClientIds.delete(boardId);
     }
   });
-}
-
-function hashCode(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0; // Convert to 32-bit integer
-  }
-  return Math.abs(hash);
 }

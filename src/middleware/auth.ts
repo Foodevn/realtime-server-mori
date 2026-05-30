@@ -24,8 +24,10 @@ function getClient(): jwksClient.JwksClient {
 
 export async function authMiddleware(socket: Socket, next: NextFn): Promise<void> {
   const token = socket.handshake.auth?.token as string | undefined;
+  console.log('[AuthMiddleware] Checking token:', token ? 'Present' : 'Missing');
 
   if (!token) {
+    console.error('[AuthMiddleware] ❌ No token provided');
     return next(new Error('Unauthorized: no token provided'));
   }
 
@@ -33,14 +35,17 @@ export async function authMiddleware(socket: Socket, next: NextFn): Promise<void
     // Decode header to get kid + algorithm
     const decoded = jwt.decode(token, { complete: true });
     if (!decoded || typeof decoded === 'string') {
+      console.error('[AuthMiddleware] ❌ Malformed token');
       return next(new Error('Unauthorized: malformed token'));
     }
 
     const { alg, kid } = decoded.header;
+    console.log(`[AuthMiddleware] Alg: ${alg}, Kid: ${kid}`);
 
     // ES256 (new Supabase JWT Signing Keys) → verify with JWKS public key
     if (alg === 'ES256') {
       if (!kid) {
+        console.error('[AuthMiddleware] ❌ Token missing kid for ES256');
         return next(new Error('Unauthorized: token missing kid'));
       }
 
@@ -53,13 +58,14 @@ export async function authMiddleware(socket: Socket, next: NextFn): Promise<void
       }) as jwt.JwtPayload;
 
       socket.data.userId = payload.sub;
-      console.log('[Auth] ✅ User authenticated (ES256):', payload.sub);
+      console.log('[AuthMiddleware] ✅ User authenticated (ES256):', payload.sub);
       return next();
     }
 
     // HS256 (legacy JWT secret) → verify with symmetric secret
     const secret = process.env.SUPABASE_JWT_SECRET;
     if (!secret) {
+      console.error('[AuthMiddleware] ❌ Server misconfiguration: missing SUPABASE_JWT_SECRET');
       return next(new Error('Server misconfiguration: missing JWT secret'));
     }
 
@@ -68,10 +74,10 @@ export async function authMiddleware(socket: Socket, next: NextFn): Promise<void
     }) as jwt.JwtPayload;
 
     socket.data.userId = payload.sub;
-    console.log('[Auth] ✅ User authenticated (HS256):', payload.sub);
+    console.log('[AuthMiddleware] ✅ User authenticated (HS256):', payload.sub);
     next();
   } catch (err) {
-    console.error('[Auth] ❌ JWT verification failed:', (err as Error).message);
+    console.error('[AuthMiddleware] ❌ JWT verification failed:', (err as Error).message);
     next(new Error('Unauthorized: invalid token'));
   }
 }
