@@ -99,7 +99,10 @@ export function setupYjsSync(io: Server): void {
       }
 
       if (ids && ids.size > 0) {
-        removeAwarenessStates(awareness, Array.from(ids), socket);
+        const removedIds = Array.from(ids);
+        removeAwarenessStates(awareness, removedIds, socket);
+        const awarenessUpdate = encodeAwarenessUpdate(awareness, removedIds);
+        io.to(boardId).emit('awareness:update', Buffer.from(awarenessUpdate));
         ids.clear();
       }
       socketClientIds.delete(boardId);
